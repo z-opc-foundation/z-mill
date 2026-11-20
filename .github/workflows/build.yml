@@ -19,12 +19,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Checkout z-util (dependency source)
+        uses: actions/checkout@v7
+        with:
+          repository: z-opc-foundation/z-util
+          path: z-util
+
       - name: Set up JDK 17
         uses: actions/setup-java@v6
         with:
           distribution: corretto
           java-version: '17'
           cache: maven
+
+      - name: Install z-util artifacts (skip tests — z-util 的 CI 负责测试门禁，这里只供依赖)
+        # z-util-doc 家族发布受限于 Central（本地 mvn install 口径），CI 上必须现做一份进 runner 的 ~/.m2。
+        run: mvn -B -f z-util/pom.xml -DskipTests clean install
 
       - name: Build (compile + unit test)
         run: mvn -B clean install
