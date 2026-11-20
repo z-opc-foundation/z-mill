@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>z-mill 资料磨坊</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%234f6ef7'/%3E%3Ctext x='16' y='21' font-size='14' text-anchor='middle' fill='white' font-family='monospace'%3E%E7%A3%A8%3C/text%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f5f6fa; --panel: #ffffff; --line: #e4e7ef; --ink: #1d2333; --ink2: #6b7280;
+  --accent: #4f6ef7; --accent-soft: #eef1ff; --ok: #16a34a; --warn: #d97706; --bad: #dc2626;
+  --radius: 12px; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.65 -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+header {
+  display: flex; align-items: center; gap: 12px; padding: 14px 28px;
+  background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10;
+}
+header .logo { width: 34px; height: 34px; border-radius: 9px; background: var(--accent);
+  color: #fff; display: flex; align-items: center; justify-content: center; font-size: 17px; }
+header h1 { font-size: 17px; margin: 0; font-weight: 700; }
+header .sub { color: var(--ink2); font-size: 13px; margin-top: 1px; }
+header .spacer { flex: 1; }
+header .hint { color: var(--ink2); font-size: 13px; }
+main { max-width: 1280px; margin: 0 auto; padding: 20px 28px 48px; }
+
+/* 上传区 */
+#drop {
+  border: 2px dashed #c3cbf5; border-radius: var(--radius); background: var(--panel);
+  padding: 44px 24px; text-align: center; cursor: pointer; transition: all .18s ease;
+}
+#drop:hover { border-color: var(--accent); background: var(--accent-soft); }
+#drop.drag { border-color: var(--accent); background: var(--accent-soft); transform: scale(1.004); }
+#drop .big { font-size: 17px; font-weight: 600; }
+#drop .formats { color: var(--ink2); font-size: 13px; margin-top: 6px; }
+#drop .kbd { font-family: var(--mono); background: #f1f3f9; border: 1px solid var(--line);
+  border-radius: 5px; padding: 0 6px; font-size: 12px; }
+#drop.busy { pointer-events: none; opacity: .6; }
+#drop .spinner { display: inline-block; width: 16px; height: 16px; vertical-align: -3px;
+  border: 2px solid #c7d2fe; border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .8s linear infinite; margin-right: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 主体两栏 */
+#workspace { display: none; grid-template-columns: 300px 1fr; gap: 18px; margin-top: 18px; align-items: start; }
+#workspace.on { display: grid; }
+#fileList { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+#fileList .fl-head { padding: 10px 14px; font-size: 13px; color: var(--ink2); border-bottom: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center; }
+#fileList .fl-head a { color: var(--accent); cursor: pointer; }
+.fitem { padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; transition: background .12s; }
+.fitem:last-child { border-bottom: none; }
+.fitem:hover { background: #f8f9fd; }
+.fitem.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.fitem .fname { font-size: 14px; font-weight: 600; word-break: break-all; }
+.fitem .fmeta { font-size: 12px; color: var(--ink2); margin-top: 2px; display: flex; gap: 8px; align-items: center; }
+.badge { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 20px; letter-spacing: .3px; }
+.badge.fmt { background: #eef1ff; color: var(--accent); }
+.badge.ok { background: #e8f7ee; color: var(--ok); }
+.badge.unsupported { background: #fdf3e3; color: var(--warn); }
+.badge.failed { background: #fdeaea; color: var(--bad); }
+
+/* 查看器 */
+#viewer { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.vhead { padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.vhead .vtitle { font-weight: 700; font-size: 15px; word-break: break-all; }
+.vhead .chips { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.chip { font-size: 12px; color: var(--ink2); background: #f1f3f9; border-radius: 20px; padding: 2px 10px; }
+.vhead .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; font-size: 13px; border: 1px solid var(--line); background: #fff; color: var(--ink);
+  border-radius: 8px; padding: 5px 13px; cursor: pointer; transition: all .12s; }
+button:hover { border-color: var(--accent); color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.08); color: #fff; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); padding: 0 12px; background: #fafbfe; }
+.tab { padding: 9px 14px; font-size: 13.5px; color: var(--ink2); cursor: pointer; border: none; background: none;
+  border-bottom: 2px solid transparent; border-radius: 0; }
+.tab:hover { color: var(--ink); }
+.tab.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.vbody { padding: 4px 18px 22px; max-height: calc(100vh - 320px); min-height: 260px; overflow: auto; }
+.vbody .plain { white-space: pre-wrap; font-family: var(--mono); font-size: 13px; word-break: break-word; }
+.vbody .msg { padding: 30px 10px; text-align: center; color: var(--ink2); }
+
+/* markdown 预览 */
+.md { font-size: 14.5px; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 1.1em 0 .45em; line-height: 1.35; }
+.md h1 { font-size: 1.45em; border-bottom: 1px solid var(--line); padding-bottom: .2em; }
+.md h2 { font-size: 1.25em; }
+.md h3 { font-size: 1.1em; }
+.md p { margin: .55em 0; }
+.md code { font-family: var(--mono); font-size: .88em; background: #f1f3f9; border-radius: 4px; padding: 1px 5px; }
+.md pre { background: #f6f7fb; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow: auto; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { margin: .6em 0; padding: 6px 14px; border-left: 3px solid #c7d2fe; background: var(--accent-soft);
+  border-radius: 0 8px 8px 0; color: #3b4256; }
+.md table { border-collapse: collapse; margin: .7em 0; font-size: 13.5px; }
+.md th, .md td { border: 1px solid var(--line); padding: 5px 12px; }
+.md th { background: #f4f6fd; font-weight: 600; }
+.md a { color: var(--accent); }
+.md hr { border: none; border-top: 1px solid var(--line); margin: 1.1em 0; }
+.md .imgchip { display: inline-block; background: #f1f3f9; border: 1px solid var(--line);
+  border-radius: 6px; padding: 2px 10px; font-size: 12.5px; color: var(--ink2); }
+
+/* 分块 */
+.chunk { border: 1px solid var(--line); border-radius: 10px; margin: 12px 0; overflow: hidden; }
+.chunk .chead { padding: 7px 14px; background: #f8f9fd; border-bottom: 1px solid var(--line);
+  font-size: 12.5px; color: var(--ink2); display: flex; gap: 8px; align-items: center; }
+.chunk .chead .cno { background: var(--accent-soft); color: var(--accent); font-weight: 700;
+  border-radius: 5px; padding: 0 7px; font-size: 11.5px; }
+.chunk .ctext { padding: 10px 14px; white-space: pre-wrap; font-size: 13px; word-break: break-word; }
+
+/* toast */
+#toast { position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%) translateY(20px);
+  background: #23293d; color: #fff; border-radius: 10px; padding: 9px 20px; font-size: 14px;
+  opacity: 0; pointer-events: none; transition: all .25s ease; z-index: 99; max-width: 80vw; }
+#toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.err { background: var(--bad); }
+footer { text-align: center; color: var(--ink2); font-size: 12.5px; margin-top: 34px; }
+footer a { color: var(--ink2); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">磨</div>
+  <div>
+    <h1>z-mill 资料磨坊</h1>
+    <div class="sub">拖进来，磨成 Markdown · JSON · 纯文本 · HTML</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="hint">13 种格式 · 零依赖 · 本机研磨，文件不出你的机器</div>
+</header>
+
+<main>
+  <div id="drop">
+    <div class="big" id="dropText">把资料拖到这里，或点击选择文件</div>
+    <div class="formats">pdf · docx · doc · xlsx · xls · pptx · ppt · rtf · odt · ods · odp · epub · txt　（可多选，<span class="kbd">Ctrl/⌘+V</span> 粘贴也行）</div>
+    <input id="picker" type="file" multiple hidden>
+  </div>
+
+  <div id="workspace">
+    <div id="fileList">
+      <div class="fl-head"><span>成品清单</span><a id="reset">清空重来</a></div>
+      <div id="files"></div>
+    </div>
+    <div id="viewer">
+      <div class="vhead">
+        <div class="vtitle" id="vTitle"></div>
+        <div class="chips" id="vChips"></div>
+        <div class="actions" id="vActions"></div>
+      </div>
+      <div class="tabs" id="vTabs"></div>
+      <div class="vbody" id="vBody"></div>
+    </div>
+  </div>
+
+  <footer>z-mill · 解析引擎来自 z-util-doc 十三件套 · <a href="https://github.com/z-opc-foundation/z-mill" target="_blank" rel="noreferrer">GitHub</a></footer>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const VIEWS = [
+  { key: "preview", label: "预览" },
+  { key: "md", label: "Markdown" },
+  { key: "json", label: "JSON" },
+  { key: "txt", label: "纯文本" },
+  { key: "html", label: "HTML" },
+  { key: "chunks", label: "分块" },
+];
+const state = { results: [], sel: -1, tab: "preview" };
+
+const $ = id => document.getElementById(id);
+const drop = $("drop"), picker = $("picker");
+
+/* ---------- 上传交互 ---------- */
+drop.addEventListener("click", () => picker.click());
+picker.addEventListener("change", () => { grindFiles([...picker.files]); picker.value = ""; });
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("drag"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("drag"); }));
+drop.addEventListener("drop", e => grindFiles([...e.dataTransfer.files]));
+document.addEventListener("paste", e => {
+  const files = [...(e.clipboardData ? e.clipboardData.files : [])];
+  if (files.length) grindFiles(files);
+});
+
+async function grindFiles(files) {
+  if (!files.length) return;
+  const fd = new FormData();
+  files.forEach(f => fd.append("files", f, f.name));
+  fd.append("views", "md,json,txt,html");
+  fd.append("chunks", "true");
+  drop.classList.add("busy");
+  $("dropText").innerHTML = '<span class="spinner"></span>研磨中，' + files.length + " 个文件…";
+  try {
+    const res = await fetch("/api/grind", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    state.results = state.results.concat(data.results);
+    const firstOk = data.results.findIndex(r => r.status === "ok");
+    if (firstOk >= 0) { state.sel = state.results.length - data.results.length + firstOk; state.tab = "preview"; }
+    else if (data.results.length) state.sel = state.results.length - data.results.length;
+    renderList(); renderViewer();
+    toast("磨完 " + data.results.filter(r => r.status === "ok").length + "/" + data.results.length + " 件");
+  } catch (e) {
+    toast("研磨失败：" + e.message, true);
+  } finally {
+    drop.classList.remove("busy");
+    $("dropText").textContent = "把资料拖到这里，或点击选择文件";
+  }
+}
+
+$("reset").addEventListener("click", () => {
+  state.results = []; state.sel = -1;
+  $("workspace").classList.remove("on");
+});
+
+/* ---------- 清单 ---------- */
+function renderList() {
+  $("workspace").classList.add("on");
+  const box = $("files");
+  box.innerHTML = "";
+  state.results.forEach((r, i) => {
+    const div = document.createElement("div");
+    div.className = "fitem" + (i === state.sel ? " sel" : "");
+    const name = document.createElement("div");
+    name.className = "fname";
+    name.textContent = r.name;
+    const meta = document.createElement("div");
+    meta.className = "fmeta";
+    const badge = document.createElement("span");
+    badge.className = "badge " + r.status;
+    badge.textContent = r.status === "ok" ? (r.format || "") : (r.status === "unsupported" ? "不支持" : "失败");
+    meta.appendChild(badge);
+    if (r.status === "ok") {
+      const m = document.createElement("span");
+      m.textContent = r.stats.chars + " 字 · " + r.stats.blocks + " 块" + (r.chunks ? " · " + r.chunks.length + " 分块" : "");
+      meta.appendChild(m);
+    } else {
+      const m = document.createElement("span");
+      m.textContent = r.error || "嗅探不出已知格式";
+      meta.appendChild(m);
+    }
+    div.appendChild(name); div.appendChild(meta);
+    div.addEventListener("click", () => { state.sel = i; state.tab = "preview"; renderList(); renderViewer(); });
+    box.appendChild(div);
+  });
+}
+
+/* ---------- 查看器 ---------- */
+function renderViewer() {
+  const r = state.results[state.sel];
+  const tabsBox = $("vTabs"), body = $("vBody"), actions = $("vActions");
+  $("vTitle").textContent = r ? r.name : "";
+  $("vChips").innerHTML = "";
+  tabsBox.innerHTML = ""; body.innerHTML = ""; actions.innerHTML = "";
+  if (!r) return;
+  if (r.status === "unsupported") {
+    body.innerHTML = '<div class="msg">这个文件嗅探不出已知格式。<br>支持：pdf · docx · doc · xlsx · xls · pptx · ppt · rtf · odt · ods · odp · epub · txt</div>';
+    return;
+  }
+  if (r.status === "failed") {
+    body.innerHTML = '<div class="msg">研磨失败：' + esc(r.error || "未知错误") + "</div>";
+    return;
+  }
+  const chips = [r.format, r.stats.blocks + " 块", r.stats.chars + " 字"];
+  if (r.chunks) chips.push(r.chunks.length + " 分块");
+  chips.forEach(c => { const s = document.createElement("span"); s.className = "chip"; s.textContent = c; $("vChips").appendChild(s); });
+
+  const dl = (ext, label) => {
+    const b = document.createElement("button");
+    b.textContent = "下载 ." + (label || ext);
+    b.addEventListener("click", () => {
+      const base = r.name.replace(/\.[^.]*$/, "") || r.name;
+      const blob = new Blob([r.outputs[ext]], { type: "text/plain;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = base + "." + ext; a.click();
+      URL.revokeObjectURL(a.href);
+      toast("已下载 " + base + "." + ext);
+    });
+    return b;
+  };
+  const cp = () => {
+    const b = document.createElement("button");
+    b.textContent = "复制当前内容";
+    b.addEventListener("click", async () => {
+      const text = currentText(r);
+      try { await navigator.clipboard.writeText(text); toast("已复制 " + text.length + " 字符"); }
+      catch (e) { toast("复制失败", true); }
+    });
+    return b;
+  };
+  actions.appendChild(cp());
+  ["md", "json", "txt", "html"].filter(k => r.outputs[k]).forEach(k => actions.appendChild(dl(k)));
+
+  const views = VIEWS.filter(v => v.key === "chunks" ? r.chunks : true);
+  views.forEach(v => {
+    const b = document.createElement("button");
+    b.className = "tab" + (state.tab === v.key ? " on" : "");
+    b.textContent = v.label;
+    b.addEventListener("click", () => { state.tab = v.key; renderViewer(); });
+    tabsBox.appendChild(b);
+  });
+  const body2 = body;
+  const active = views.find(v => v.key === state.tab) || views[0];
+  if (active.key === "preview") {
+    const div = document.createElement("div");
+    div.className = "md";
+    div.innerHTML = renderMd(r.outputs.md);
+    body2.appendChild(div);
+  } else if (active.key === "chunks") {
+    r.chunks.forEach((c, i) => {
+      const card = document.createElement("div"); card.className = "chunk";
+      const head = document.createElement("div"); head.className = "chead";
+      const no = document.createElement("span"); no.className = "cno"; no.textContent = "#" + (i + 1);
+      const crumb = document.createElement("span");
+      crumb.textContent = c.path.filter(p => p).join(" / ") || "(无标题)";
+      head.appendChild(no); head.appendChild(crumb);
+      const text = document.createElement("div"); text.className = "ctext"; text.textContent = c.text;
+      card.appendChild(head); card.appendChild(text); body2.appendChild(card);
+    });
+  } else {
+    let text = r.outputs[active.key];
+    if (active.key === "json") { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {} }
+    const pre = document.createElement("div");
+    pre.className = "plain";
+    pre.textContent = text;
+    body2.appendChild(pre);
+  }
+}
+
+function currentText(r) {
+  if (state.tab === "preview" || state.tab === "chunks") return r.outputs.md;
+  return r.outputs[state.tab];
+}
+
+/* ---------- 安全 markdown 渲染（先转义，再转换） ---------- */
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function inline(s) {
+  let out = esc(s);
+  out = out.replace(/`([^`]+)`/g, (m, c) => "<code>" + c + "</code>");
+  out = out.replace(/\*\*([^*]+)\*\*/g, (m, t) => "<strong>" + t + "</strong>");
+  out = out.replace(/(^|[^*])\*([^*\s][^*]*)\*/g, (m, p, t) => p + "<em>" + t + "</em>");
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+|#[^)\s]*)\)/g,
+    (m, t, u) => '<a href="' + u + '" target="_blank" rel="noreferrer">' + t + "</a>");
+  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, u) =>
+    '<span class="imgchip">🖼 ' + (alt || "图片") + "</span>");
+  out = out.replace(/\\([\\`*_{}\[\]()#+\-.!>|~])/g, "$1");
+  return out;
+}
+function renderMd(src) {
+  const lines = src.split("\n");
+  const out = [];
+  let para = [], list = null, quote = [], table = [], code = null, listGap = false;
+  const flushPara = () => { if (para.length) { out.push("<p>" + para.map(inline).join("<br>") + "</p>"); para = []; } };
+  const flushList = () => { if (list) { out.push("</" + list + ">"); list = null; } listGap = false; };
+  const flushQuote = () => { if (quote.length) { out.push("<blockquote>" + quote.map(inline).join("<br>") + "</blockquote>"); quote = []; } };
+  const flushTable = () => {
+    if (!table.length) return;
+    let rows = table.filter(r => !/^\|[\s:|-]+\|$/.test(r.trim()));
+    if (rows.length) {
+      const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => inline(c.trim()));
+      let html = "<table>";
+      rows.forEach((r, i) => {
+        html += "<tr>" + cells(r).map((c, j) => i === 0 ? "<th>" + c + "</th>" : "<td>" + c + "</td>").join("") + "</tr>";
+      });
+      out.push(html + "</table>");
+    }
+    table = [];
+  };
+  const flushAll = () => { flushPara(); flushList(); flushQuote(); flushTable(); };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, "");
+    if (code !== null) {
+      if (/^```/.test(line)) { out.push("<pre><code>" + esc(code.join("\n")) + "</code></pre>"); code = null; }
+      else code.push(raw);
+      continue;
+    }
+    if (/^```/.test(line)) { flushAll(); code = []; continue; }
+    if (!line.trim()) { if (list) listGap = true; else flushAll(); continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) { flushAll(); out.push("<hr>"); continue; }
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { flushAll(); out.push("<h" + h[1].length + ">" + inline(h[2]) + "</h" + h[1].length + ">"); continue; }
+    const q = line.match(/^>\s?(.*)$/);
+    if (q) { flushPara(); flushList(); flushTable(); quote.push(q[1]); continue; }
+    if (/^\s*\|.*\|/.test(line)) { flushPara(); flushList(); flushQuote(); table.push(line); continue; }
+    const ul = line.match(/^\s*[-*]\s+(.*)$/);
+    const ol = line.match(/^\s*\d+[.、]\s+(.*)$/);
+    if (ul || ol) {
+      flushPara(); flushQuote(); flushTable();
+      const want = ul ? "ul" : "ol";
+      if (list !== want) { flushList(); out.push("<" + want + ">"); list = want; }
+      listGap = false;
+      out.push("<li>" + inline((ul || ol)[1]) + "</li>");
+      continue;
+    }
+    flushAll();
+    para.push(line);
+  }
+  if (code !== null) out.push("<pre><code>" + esc(code.join("\n")) + "</code></pre>");
+  flushAll();
+  return out.join("\n");
+}
+
+/* ---------- toast ---------- */
+let toastTimer;
+function toast(msg, isErr) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "on" + (isErr ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ""; }, 2600);
+}
+
+/* 键盘：↑↓ 切文件 */
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if (e.key === "ArrowDown" && state.sel < state.results.length - 1) { state.sel++; renderList(); renderViewer(); e.preventDefault(); }
+  if (e.key === "ArrowUp" && state.sel > 0) { state.sel--; renderList(); renderViewer(); e.preventDefault(); }
+});
+</script>
+</body>
+</html>

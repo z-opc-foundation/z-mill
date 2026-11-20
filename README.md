@@ -49,12 +49,28 @@ java -jar z-mill-cli/target/z-mill.jar 资料/ -o 成品/ -f md,json
 
 退出码：`0` 成功；`1` 用法错误；`2` 有文件研磨失败或格式不支持。
 
+### 网页磨坊
+
+```bash
+mvn -pl z-mill-web -am package
+java -jar z-mill-web/target/z-mill-web.jar --port 8891
+# 打开 http://localhost:8891
+```
+
+拖拽（或点击、`Ctrl/⌘+V` 粘贴）上传，多文件批量；成品清单逐件给状态徽章
+（格式 / 不支持 / 失败），查看器六个 tab：**预览**（内置安全 Markdown 渲染：表格、
+列表、引用、代码块；先转义再转换，防 XSS）、Markdown 源码、JSON（已美化）、
+纯文本、HTML 源码、**分块**（标题路径面包屑的 RAG 资料粒度卡片）。一键复制、
+逐形态下载、`↑`/`↓` 键盘切文件。`POST /api/grind`（multipart，单请求上限 64MB）
+可供脚本直接调用，`GET /` 出单页。
+
 ## 模块
 
 | 模块 | 内容 |
 |---|---|
 | `z-mill-core` | `Mill` 门面（嗅探→读取→渲染）、`MillOutput`（四形态按需计算）、`MillJson`（零依赖 JSON 发射器，RFC 8259 转义）、`MillChunker`（标题路径分块）、`MillBatch`（批量台账：ok/unsupported/failed 逐文件隔离） |
 | `z-mill-cli` | 命令行入口 `com.zifang.mill.cli.Main`；shade 出可执行胖 jar `target/z-mill.jar`（`ServicesResourceTransformer` 合并 14 个读取器的 SPI 注册表） |
+| `z-mill-web` | 网页磨坊：JDK 内置 HttpServer + 内嵌单页前端（零前端依赖、无 CDN）；手写 multipart 解析；同样 shade 出 `target/z-mill-web.jar` |
 
 解析本体不在本仓：`Mill` 是 z-util-doc 家族（13 件零依赖读取器，`com.zifang.util.doc.DocReader` SPI）之上的研磨层。格式识别、二进制解析、样式还原能力清单见 [z-util-doc](https://github.com/z-opc-foundation/z-util)。
 

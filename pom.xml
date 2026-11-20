@@ -14,6 +14,7 @@
     <modules>
         <module>z-mill-core</module>
         <module>z-mill-cli</module>
+        <module>z-mill-web</module>
     </modules>
 
     <properties>
@@ -34,6 +35,11 @@
             <dependency>
                 <groupId>io.github.yuku123</groupId>
                 <artifactId>z-mill-core</artifactId>
+                <version>${revision}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.yuku123</groupId>
+                <artifactId>z-mill-web</artifactId>
                 <version>${revision}</version>
             </dependency>
 

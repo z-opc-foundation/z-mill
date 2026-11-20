@@ -1,0 +1,243 @@
+package com.zifang.mill.web;
+
+import com.zifang.mill.Mill;
+import com.zifang.mill.MillChunker;
+import com.zifang.mill.MillJson;
+import com.zifang.mill.MillOutput;
+import com.zifang.mill.MillView;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+
+/** 网页磨坊：JDK 内置 HttpServer，单页前端内嵌资源。GET / 出页面，POST /api/grind 收料出成品。 */
+public final class MillServer {
+
+    /** 单次上传上限：64MB。超出直接 413，防一个请求拖垮磨坊。 */
+    static final long MAX_BODY_BYTES = 64L * 1024 * 1024;
+
+    public static final int DEFAULT_PORT = 8891;
+
+    private final Mill mill;
+    private volatile HttpServer server;
+
+    public MillServer() {
+        this(new Mill());
+    }
+
+    public MillServer(Mill mill) {
+        this.mill = mill;
+    }
+
+    public static void main(String[] args) throws IOException, InterruptedException {
+        int port = DEFAULT_PORT;
+        for (int i = 0; i < args.length - 1; i++) {
+            if ("--port".equals(args[i])) {
+                port = Integer.parseInt(args[i + 1]);
+            }
+        }
+        MillServer millServer = new MillServer();
+        int bound = millServer.start(port);
+        System.out.println("z-mill 资料磨坊已开张：http://localhost:" + bound);
+        new CountDownLatch(1).await();
+    }
+
+    /** 绑定并开始监听；port=0 时由系统分配，返回实际端口（测试用）。 */
+    public int start(int port) throws IOException {
+        HttpServer http = HttpServer.create(new InetSocketAddress(port), 0);
+        http.setExecutor(Executors.newFixedThreadPool(8));
+        http.createContext("/", this::serveIndex);
+        http.createContext("/api/grind", this::serveGrind);
+        http.start();
+        server = http;
+        return http.getAddress().getPort();
+    }
+
+    public void stop() {
+        HttpServer http = server;
+        if (http != null) {
+            http.stop(0);
+            server = null;
+        }
+    }
+
+    private void serveIndex(HttpExchange exchange) throws IOException {
+        if (!"GET".equals(exchange.getRequestMethod())) {
+            sendError(exchange, 405, "只接受 GET");
+            return;
+        }
+        String path = exchange.getRequestURI().getPath();
+        if (!"/".equals(path) && !"/index.html".equals(path)) {
+            sendError(exchange, 404, "没有这个页面");
+            return;
+        }
+        byte[] html;
+        try (InputStream in = MillServer.class.getResourceAsStream("/web/index.html")) {
+            if (in == null) {
+                sendError(exchange, 500, "页面资源缺失");
+                return;
+            }
+            html = in.readAllBytes();
+        }
+        exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+        exchange.sendResponseHeaders(200, html.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(html);
+        }
+    }
+
+    private void serveGrind(HttpExchange exchange) throws IOException {
+        try {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "只接受 POST");
+                return;
+            }
+            String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+            if (contentType == null || !contentType.toLowerCase().startsWith("multipart/form-data")) {
+                sendError(exchange, 400, "请用 multipart/form-data 上传文件");
+                return;
+            }
+            byte[] body = readBody(exchange);
+            List<MillMultipart.Part> parts = MillMultipart.parse(body, contentType);
+
+            List<MillMultipart.Part> files = new ArrayList<>();
+            Map<String, String> fields = new LinkedHashMap<>();
+            for (MillMultipart.Part part : parts) {
+                if (part.filename() != null) {
+                    files.add(part);
+                } else {
+                    fields.put(part.name(), new String(part.content(), StandardCharsets.UTF_8));
+                }
+            }
+            if (files.isEmpty()) {
+                sendError(exchange, 400, "没有收到任何文件");
+                return;
+            }
+            List<MillView> views = parseViews(fields.getOrDefault("views", "md,json,txt,html"));
+            boolean withChunks = "true".equalsIgnoreCase(fields.getOrDefault("chunks", "true"));
+
+            StringBuilder sb = new StringBuilder("{\"results\":[");
+            for (int i = 0; i < files.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                appendResult(sb, files.get(i), views, withChunks);
+            }
+            sb.append("]}");
+            sendJson(exchange, 200, sb.toString());
+        } catch (BodyTooLarge e) {
+            sendError(exchange, 413, "上传超过 " + (MAX_BODY_BYTES / 1024 / 1024) + "MB 上限");
+        } catch (IllegalArgumentException e) {
+            sendError(exchange, 400, e.getMessage());
+        }
+    }
+
+    private void appendResult(StringBuilder sb, MillMultipart.Part file,
+                              List<MillView> views, boolean withChunks) {
+        String name = file.filename() == null ? "(unnamed)" : file.filename();
+        sb.append("{\"name\":").append(MillJson.escape(name));
+        byte[] data = file.content();
+        if (!mill.supports(data)) {
+            sb.append(",\"status\":\"unsupported\"}");
+            return;
+        }
+        try {
+            MillOutput output = mill.grind(data, name);
+            sb.append(",\"status\":\"ok\",\"format\":").append(MillJson.escape(
+                    output.format() == null ? "" : output.format().name()));
+            List<MillChunker.Chunk> chunks = withChunks ? MillChunker.chunk(output.document()) : null;
+            sb.append(",\"stats\":{\"blocks\":").append(output.document().getBlocks().size());
+            if (chunks != null) {
+                sb.append(",\"chunks\":").append(chunks.size());
+            }
+            sb.append(",\"chars\":").append(output.markdown().length()).append('}');
+            sb.append(",\"outputs\":{");
+            for (int i = 0; i < views.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                MillView view = views.get(i);
+                sb.append(MillJson.escape(view.extension())).append(':')
+                        .append(MillJson.escape(view.render(output)));
+            }
+            sb.append('}');
+            if (chunks != null) {
+                sb.append(",\"chunks\":[");
+                for (int i = 0; i < chunks.size(); i++) {
+                    if (i > 0) {
+                        sb.append(',');
+                    }
+                    MillChunker.Chunk chunk = chunks.get(i);
+                    sb.append("{\"heading\":").append(MillJson.escape(chunk.heading()));
+                    sb.append(",\"path\":[");
+                    for (int j = 0; j < chunk.headingPath().size(); j++) {
+                        if (j > 0) {
+                            sb.append(',');
+                        }
+                        sb.append(MillJson.escape(chunk.headingPath().get(j)));
+                    }
+                    sb.append("],\"text\":").append(MillJson.escape(chunk.text())).append('}');
+                }
+                sb.append(']');
+            }
+            sb.append('}');
+        } catch (IOException | RuntimeException e) {
+            sb.append(",\"status\":\"failed\",\"error\":").append(MillJson.escape(
+                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())).append('}');
+        }
+    }
+
+    private static List<MillView> parseViews(String raw) {
+        List<MillView> views = new ArrayList<>();
+        for (String token : raw.split(",")) {
+            MillView view = MillView.parse(token.trim());
+            if (!views.contains(view)) {
+                views.add(view);
+            }
+        }
+        return views;
+    }
+
+    private static byte[] readBody(HttpExchange exchange) throws IOException {
+        try (InputStream in = exchange.getRequestBody()) {
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            while ((read = in.read(chunk)) >= 0) {
+                total += read;
+                if (total > MAX_BODY_BYTES) {
+                    throw new BodyTooLarge();
+                }
+                buffer.write(chunk, 0, read);
+            }
+            return buffer.toByteArray();
+        }
+    }
+
+    private static void sendJson(HttpExchange exchange, int code, String json) throws IOException {
+        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+        exchange.sendResponseHeaders(code, bytes.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(bytes);
+        }
+    }
+
+    private static void sendError(HttpExchange exchange, int code, String message) throws IOException {
+        sendJson(exchange, code, "{\"error\":" + MillJson.escape(message) + "}");
+    }
+
+    private static final class BodyTooLarge extends RuntimeException {
+    }
+}
