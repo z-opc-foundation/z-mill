@@ -1,0 +1,52 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: JDK 17 compile + test
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: '17'
+          cache: maven
+
+      - name: Build (compile + unit test)
+        run: mvn -B clean install
+
+      - name: Test summary
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          best = {}
+          for x in glob.glob('**/target/surefire-reports/TEST-*.xml', recursive=True):
+              try:
+                  r = ET.parse(x).getroot()
+              except Exception:
+                  continue
+              mod = x.split('/target/')[0]
+              key = r.get('name')
+              if key not in best or len(mod) > len(best[key][0]):
+                  best[key] = (mod, r)
+          def tot(a):
+              return sum(int(r.get(a, 0)) for _, r in best.values())
+          print("测试类 %d / 用例 %d / 失败 %d / 错误 %d / 跳过 %d"
+                % (len(best), tot('tests'), tot('failures'), tot('errors'), tot('skipped')))
+          PY
