@@ -231,6 +231,13 @@ public final class MillJson {
         return false;
     }
 
+    /** 转义并带引号的 JSON 字符串字面量；null 输出 null 字面量。供本仓手写 JSON 发射器复用。 */
+    public static String escape(String value) {
+        StringBuilder sb = new StringBuilder();
+        appendString(sb, value);
+        return sb.toString();
+    }
+
     private static void appendString(StringBuilder sb, String value) {
         if (value == null) {
             sb.append("null");
