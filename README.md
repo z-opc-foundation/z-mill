@@ -38,8 +38,7 @@ MillBatch.Report report = MillBatch.grindAll(mill,
 
 ```bash
 mvn -pl z-mill-cli -am package
-java -cp z-mill-cli/target/classes:z-mill-core/target/classes:<z-util-doc 各 jar> \
-     com.zifang.mill.cli.Main 资料/ -o 成品/ -f md,json
+java -jar z-mill-cli/target/z-mill.jar 资料/ -o 成品/ -f md,json
 ```
 
 | 参数 | 说明 |
@@ -55,7 +54,7 @@ java -cp z-mill-cli/target/classes:z-mill-core/target/classes:<z-util-doc 各 ja
 | 模块 | 内容 |
 |---|---|
 | `z-mill-core` | `Mill` 门面（嗅探→读取→渲染）、`MillOutput`（四形态按需计算）、`MillJson`（零依赖 JSON 发射器，RFC 8259 转义）、`MillChunker`（标题路径分块）、`MillBatch`（批量台账：ok/unsupported/failed 逐文件隔离） |
-| `z-mill-cli` | 命令行入口 `com.zifang.mill.cli.Main` |
+| `z-mill-cli` | 命令行入口 `com.zifang.mill.cli.Main`；shade 出可执行胖 jar `target/z-mill.jar`（`ServicesResourceTransformer` 合并 14 个读取器的 SPI 注册表） |
 
 解析本体不在本仓：`Mill` 是 z-util-doc 家族（13 件零依赖读取器，`com.zifang.util.doc.DocReader` SPI）之上的研磨层。格式识别、二进制解析、样式还原能力清单见 [z-util-doc](https://github.com/z-opc-foundation/z-util)。
 
