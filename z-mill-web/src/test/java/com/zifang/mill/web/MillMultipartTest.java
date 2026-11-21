@@ -84,4 +84,20 @@ class MillMultipartTest {
         assertEquals("text mentions --" + BOUNDARY + " inline",
                 new String(parts.get(0).content(), StandardCharsets.UTF_8));
     }
+
+    @Test
+    void filenameIsDecodedAsUtf8() {
+        // 浏览器把文件名按原字节放进 Content-Disposition，之前按 ISO-8859-1 解成了乱码
+        String filename = "世界的逻辑.pdf";
+        byte[] body = concat(
+                bytes("--" + BOUNDARY + "\r\n"
+                        + "Content-Disposition: form-data; name=\"files\"; filename=\"" + filename + "\"\r\n"
+                        + "Content-Type: application/pdf\r\n\r\n"),
+                new byte[]{0x25, 0x50, 0x44, 0x46},
+                bytes("\r\n--" + BOUNDARY + "--\r\n"));
+        List<MillMultipart.Part> parts = MillMultipart.parse(body,
+                "multipart/form-data; boundary=" + BOUNDARY);
+        assertEquals(1, parts.size());
+        assertEquals(filename, parts.get(0).filename());
+    }
 }

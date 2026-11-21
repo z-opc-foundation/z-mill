@@ -71,11 +71,12 @@ public final class MillMultipart {
     }
 
     private static Part part(byte[] body, int start, int end) {
+        // 头块用 UTF-8 解：浏览器会把文件名按原字节直接放进 Content-Disposition
         int split = indexOf(body, "\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1), start);
         if (split < 0 || split + 4 > end) {
             return null;
         }
-        String headers = new String(body, start, split + 4 - start, StandardCharsets.ISO_8859_1);
+        String headers = new String(body, start, split + 4 - start, StandardCharsets.UTF_8);
         Map<String, String> headerMap = new HashMap<>();
         for (String line : headers.split("\r\n")) {
             int colon = line.indexOf(':');
