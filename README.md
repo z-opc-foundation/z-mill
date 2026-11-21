@@ -6,7 +6,7 @@
 
 | | MinerU | z-mill |
 |---|---|---|
-| 输入格式 | 仅 PDF（重点扫描件） | **13 种**：pdf / docx / doc / xlsx / xls / pptx / ppt / rtf / odf(odt·ods·odp) / epub / txt |
+| 输入格式 | 仅 PDF（重点扫描件） | **14 种**：pdf / docx / doc / xlsx / xls / pptx / ppt / rtf / odf(odt·ods·odp) / epub / txt / html（含网页 URL 直磨） |
 | 运行形态 | Python + GPU + 深度模型 | **纯 Java 17，零第三方依赖，JVM 进程内嵌** |
 | 部署成本 | 模型权重数 GB、CUDA 环境 | 一个 jar |
 | 解析深度 | 版面检测 / OCR / 公式识别（深度模型） | 二进制格式逐记录自研解析（BIFF 记录流 / FIB piece table / CFB 容器等） |
@@ -57,11 +57,13 @@ java -jar z-mill-web/target/z-mill-web.jar --port 8891
 # 打开 http://localhost:8891
 ```
 
-拖拽（或点击、`Ctrl/⌘+V` 粘贴）上传，多文件批量；成品清单逐件给状态徽章
-（格式 / 不支持 / 失败），查看器六个 tab：**预览**（内置安全 Markdown 渲染：表格、
-列表、引用、代码块；先转义再转换，防 XSS）、Markdown 源码、JSON（已美化）、
-纯文本、HTML 源码、**分块**（标题路径面包屑的 RAG 资料粒度卡片）。一键复制、
-逐形态下载、`↑`/`↓` 键盘切文件。`POST /api/grind`（multipart，单请求上限 64MB）
+拖拽（或点击、`Ctrl/⌘+V` 粘贴）上传，多文件批量；**URL 栏粘贴 http/https 地址直接抓取整页磨制**
+（15s 超时、单页 10MB 上限、仅 http/https）。成品清单逐件给状态徽章（格式 / 不支持 / 失败），
+查看器六个 tab：**预览**（内置安全 Markdown 渲染：表格、列表、引用、代码块；先转义再转换，
+防 XSS）、Markdown 源码、JSON（已美化）、纯文本、HTML 源码、**分块**（标题路径面包屑的 RAG
+资料粒度卡片）。一键复制、逐形态下载、`↑`/`↓` 键盘切文件。
+
+`POST /api/grind`（multipart，单请求上限 64MB）与 `POST /api/grind-url`（JSON `{"url":...}`）
 可供脚本直接调用，`GET /` 出单页。
 
 ## 模块

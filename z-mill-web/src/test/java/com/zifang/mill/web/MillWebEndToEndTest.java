@@ -122,4 +122,28 @@ class MillWebEndToEndTest {
         String response = post("/api/grind", new byte[0], "text/plain");
         assertTrue(response.startsWith("400|"), response);
     }
+
+    @Test
+    void grindsUrlPointingAtOwnIndexPage() throws IOException {
+        String response = post("/api/grind-url",
+                ("{\"url\":\"http://localhost:" + port + "/\"}").getBytes(StandardCharsets.UTF_8),
+                "application/json");
+        assertTrue(response.startsWith("200|"), response);
+        assertTrue(response.contains("\"format\":\"HTML\""), response);
+        assertTrue(response.contains("资料磨坊"), response);
+        assertTrue(response.contains("\"chunks\""), response);
+    }
+
+    @Test
+    void rejectsNonHttpUrlSchemes() throws IOException {
+        String response = post("/api/grind-url",
+                "{\"url\":\"file:///etc/passwd\"}".getBytes(StandardCharsets.UTF_8),
+                "application/json");
+        assertTrue(response.startsWith("400|"), response);
+        assertTrue(response.contains("http/https"), response);
+
+        String missing = post("/api/grind-url", "{}".getBytes(StandardCharsets.UTF_8),
+                "application/json");
+        assertTrue(missing.startsWith("400|"), missing);
+    }
 }

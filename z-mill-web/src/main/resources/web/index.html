@@ -40,6 +40,13 @@ main { max-width: 1280px; margin: 0 auto; padding: 20px 28px 48px; }
 #drop .kbd { font-family: var(--mono); background: #f1f3f9; border: 1px solid var(--line);
   border-radius: 5px; padding: 0 6px; font-size: 12px; }
 #drop.busy { pointer-events: none; opacity: .6; }
+#urlbar { display: flex; gap: 10px; margin-top: 12px; }
+#urlbar input {
+  flex: 1; font: inherit; font-size: 14px; padding: 10px 14px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink);
+}
+#urlbar input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+#urlbar button { padding: 10px 22px; font-size: 14px; white-space: nowrap; }
 #drop .spinner { display: inline-block; width: 16px; height: 16px; vertical-align: -3px;
   border: 2px solid #c7d2fe; border-top-color: var(--accent); border-radius: 50%;
   animation: spin .8s linear infinite; margin-right: 8px; }
@@ -131,14 +138,19 @@ footer a { color: var(--ink2); }
     <div class="sub">拖进来，磨成 Markdown · JSON · 纯文本 · HTML</div>
   </div>
   <div class="spacer"></div>
-  <div class="hint">13 种格式 · 零依赖 · 本机研磨，文件不出你的机器</div>
+  <div class="hint">14 种格式 · 零依赖 · 本机研磨，文件不出你的机器</div>
 </header>
 
 <main>
   <div id="drop">
     <div class="big" id="dropText">把资料拖到这里，或点击选择文件</div>
-    <div class="formats">pdf · docx · doc · xlsx · xls · pptx · ppt · rtf · odt · ods · odp · epub · txt　（可多选，<span class="kbd">Ctrl/⌘+V</span> 粘贴也行）</div>
+    <div class="formats">pdf · docx · doc · xlsx · xls · pptx · ppt · rtf · odt · ods · odp · epub · txt · html　（可多选，<span class="kbd">Ctrl/⌘+V</span> 粘贴也行）</div>
     <input id="picker" type="file" multiple hidden>
+  </div>
+
+  <div id="urlbar">
+    <input id="urlInput" type="text" spellcheck="false" placeholder="或粘贴网页地址（http/https），整页磨成 Markdown">
+    <button id="urlGo" class="primary">磨这个网页</button>
   </div>
 
   <div id="workspace">
@@ -218,6 +230,36 @@ $("reset").addEventListener("click", () => {
   $("workspace").classList.remove("on");
 });
 
+/* ---------- 网页直磨 ---------- */
+async function grindUrl() {
+  const url = $("urlInput").value.trim();
+  if (!url) { toast("先填一个网页地址", true); return; }
+  const btn = $("urlGo");
+  btn.disabled = true;
+  btn.textContent = "抓取中…";
+  try {
+    const res = await fetch("/api/grind-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    state.results = state.results.concat(data.results);
+    const r = data.results[0];
+    if (r && r.status === "ok") { state.sel = state.results.length - 1; state.tab = "preview"; }
+    renderList(); renderViewer();
+    toast(r && r.status === "ok" ? "网页已磨成成品" : (r && r.status === "unsupported" ? "抓到了，但嗅探不出格式" : "研磨失败：" + (r && r.error || "未知")));
+  } catch (e) {
+    toast("抓取失败：" + e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "磨这个网页";
+  }
+}
+$("urlGo").addEventListener("click", grindUrl);
+$("urlInput").addEventListener("keydown", e => { if (e.key === "Enter") grindUrl(); });
+
 /* ---------- 清单 ---------- */
 function renderList() {
   $("workspace").classList.add("on");
@@ -259,7 +301,7 @@ function renderViewer() {
   tabsBox.innerHTML = ""; body.innerHTML = ""; actions.innerHTML = "";
   if (!r) return;
   if (r.status === "unsupported") {
-    body.innerHTML = '<div class="msg">这个文件嗅探不出已知格式。<br>支持：pdf · docx · doc · xlsx · xls · pptx · ppt · rtf · odt · ods · odp · epub · txt</div>';
+    body.innerHTML = '<div class="msg">这个文件嗅探不出已知格式。<br>支持：pdf · docx · doc · xlsx · xls · pptx · ppt · rtf · odt · ods · odp · epub · txt · html</div>';
     return;
   }
   if (r.status === "failed") {

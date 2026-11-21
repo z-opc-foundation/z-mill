@@ -65,6 +65,10 @@
             <groupId>io.github.yuku123</groupId>
             <artifactId>z-util-doc-epub</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.github.yuku123</groupId>
+            <artifactId>z-util-doc-html</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>

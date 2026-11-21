@@ -26,6 +26,9 @@ public final class MillServer {
     /** 单次上传上限：64MB。超出直接 413，防一个请求拖垮磨坊。 */
     static final long MAX_BODY_BYTES = 64L * 1024 * 1024;
 
+    /** 单个网页抓取上限：10MB。 */
+    static final long MAX_URL_BYTES = 10L * 1024 * 1024;
+
     public static final int DEFAULT_PORT = 8891;
 
     private final Mill mill;
@@ -58,6 +61,7 @@ public final class MillServer {
         http.setExecutor(Executors.newFixedThreadPool(8));
         http.createContext("/", this::serveIndex);
         http.createContext("/api/grind", this::serveGrind);
+        http.createContext("/api/grind-url", this::serveGrindUrl);
         http.start();
         server = http;
         return http.getAddress().getPort();
@@ -131,7 +135,8 @@ public final class MillServer {
                 if (i > 0) {
                     sb.append(',');
                 }
-                appendResult(sb, files.get(i), views, withChunks);
+                appendResult(sb, files.get(i).filename() == null ? "(unnamed)" : files.get(i).filename(),
+                        files.get(i).content(), views, withChunks);
             }
             sb.append("]}");
             sendJson(exchange, 200, sb.toString());
@@ -142,11 +147,83 @@ public final class MillServer {
         }
     }
 
-    private void appendResult(StringBuilder sb, MillMultipart.Part file,
+    /** 网页直磨：POST {"url":"https://..."} → 抓取 → 磨。只收 http/https，抓取上限 10MB。 */
+    private void serveGrindUrl(HttpExchange exchange) throws IOException {
+        try {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "只接受 POST");
+                return;
+            }
+            String body = new String(readBody(exchange), StandardCharsets.UTF_8);
+            String url = extractJsonString(body, "url");
+            if (url == null || url.isBlank()) {
+                sendError(exchange, 400, "缺少 url 字段");
+                return;
+            }
+            String scheme = java.net.URI.create(url).getScheme();
+            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                sendError(exchange, 400, "只支持 http/https 网页地址");
+                return;
+            }
+            byte[] page = fetchUrl(url);
+            StringBuilder sb = new StringBuilder("{\"results\":[");
+            appendResult(sb, url, page, parseViews("md,json,txt,html"), true);
+            sb.append("]}");
+            sendJson(exchange, 200, sb.toString());
+        } catch (BodyTooLarge e) {
+            sendError(exchange, 413, "网页超过 10MB 上限");
+        } catch (IllegalArgumentException e) {
+            sendError(exchange, 400, e.getMessage());
+        } catch (IOException e) {
+            sendError(exchange, 502, "抓取失败: " + e.getMessage());
+        }
+    }
+
+    private static byte[] fetchUrl(String url) throws IOException {
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) java.net.URI.create(url).toURL()
+                .openConnection();
+        conn.setConnectTimeout(15_000);
+        conn.setReadTimeout(15_000);
+        conn.setRequestProperty("User-Agent", "z-mill/0.1");
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) {
+            throw new IOException("HTTP " + code);
+        }
+        try (InputStream in = conn.getInputStream()) {
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            while ((read = in.read(chunk)) >= 0) {
+                total += read;
+                if (total > MAX_URL_BYTES) {
+                    throw new BodyTooLarge();
+                }
+                buffer.write(chunk, 0, read);
+            }
+            return buffer.toByteArray();
+        }
+    }
+
+    /** 极简 JSON 字符串字段提取（\" 与 \\ 转义还原）；字段不存在返回 null。 */
+    private static String extractJsonString(String json, String key) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+                .matcher(json);
+        if (!matcher.find()) {
+            return null;
+        }
+        return matcher.group(1)
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\")
+                .replace("\\n", "\n")
+                .replace("\\r", "\r")
+                .replace("\\t", "\t");
+    }
+
+    private void appendResult(StringBuilder sb, String name, byte[] data,
                               List<MillView> views, boolean withChunks) {
-        String name = file.filename() == null ? "(unnamed)" : file.filename();
         sb.append("{\"name\":").append(MillJson.escape(name));
-        byte[] data = file.content();
         if (!mill.supports(data)) {
             sb.append(",\"status\":\"unsupported\"}");
             return;
