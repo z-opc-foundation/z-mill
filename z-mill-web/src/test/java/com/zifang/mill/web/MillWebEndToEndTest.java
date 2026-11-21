@@ -215,6 +215,67 @@ class MillWebEndToEndTest {
         assertTrue(manifest.contains("成功 1，不支持 1，失败 0"), manifest);
     }
 
+    @Test
+    void editSessionOpenApplyExportRoundTrip() throws IOException {
+        // 开会话
+        ByteArrayOutputStream openBody = new ByteArrayOutputStream();
+        openBody.writeBytes(partBody("MB", "file", "笔记.txt",
+                "第一段原文\n\n第二段原文".getBytes(StandardCharsets.UTF_8)));
+        openBody.writeBytes(terminal("MB"));
+        String open = post("/api/edit-open", openBody.toByteArray(),
+                "multipart/form-data; boundary=MB");
+        assertTrue(open.startsWith("200|"), open);
+        assertTrue(open.contains("\"sessionId\":\""), open);
+        assertTrue(open.contains("\"doc\":{\"meta\""), open);
+        String sessionId = open.replaceAll(".*\"sessionId\":\"([^\"]+)\".*", "$1");
+
+        // 未知会话 → 404
+        String missing = post("/api/edit-export",
+                "{\"session\":\"no-such\",\"fmt\":\"md\",\"edits\":[]}".getBytes(StandardCharsets.UTF_8),
+                "application/json");
+        assertTrue(missing.startsWith("404|"), missing);
+
+        // 改第 0 块并导出 txt
+        HttpURLConnection conn = (HttpURLConnection) new URL("http://localhost:" + port + "/api/edit-export")
+                .openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        byte[] body = ("{\"session\":\"" + sessionId + "\",\"fmt\":\"txt\","
+                + "\"edits\":[{\"i\":0,\"text\":\"改过的第一段\"}]}").getBytes(StandardCharsets.UTF_8);
+        conn.setFixedLengthStreamingMode(body.length);
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(body);
+        }
+        assertEquals(200, conn.getResponseCode());
+        String disposition = conn.getHeaderField("Content-Disposition");
+        assertTrue(disposition.startsWith("attachment; filename*=UTF-8''"), disposition);
+        assertTrue(disposition.endsWith(".txt"), disposition);
+        String out = new String(readAll(conn.getInputStream()), StandardCharsets.UTF_8);
+        assertTrue(out.contains("改过的第一段"), out);
+        assertFalse(out.contains("第一段原文"), out);
+        assertTrue(out.contains("第二段原文"), out);
+
+        // 非文本块（表格）编辑被拒
+        String table = post("/api/edit-export",
+                ("{\"session\":\"" + sessionId + "\",\"fmt\":\"md\",\"edits\":[{\"i\":0,\"text\":\"x\"}]}")
+                        .getBytes(StandardCharsets.UTF_8),
+                "application/json");
+        assertTrue(table.startsWith("200|") || table.startsWith("400|"), table);
+    }
+
+    @Test
+    void editOpenRejectsGarbageAndOversize() throws IOException {
+        String garbage = post("/api/edit-open", partBody("MB", "file", "junk.bin",
+                new byte[]{0x00, 0x01, (byte) 0xFF, 0x00, 0x01, (byte) 0xFF}),
+                "multipart/form-data; boundary=MB");
+        assertTrue(garbage.startsWith("400|"), garbage);
+        String oversize = post("/api/edit-open", partBody("MB", "file", "big.txt",
+                new byte[(int) (com.zifang.mill.MillEdit.MAX_EDIT_FILE_BYTES + 1)]),
+                "multipart/form-data; boundary=MB");
+        assertTrue(oversize.startsWith("400|") || oversize.startsWith("413|"), oversize);
+    }
+
     private static void assertNotNull(Object value) {
         org.junit.jupiter.api.Assertions.assertNotNull(value, "manifest 缺失");
     }

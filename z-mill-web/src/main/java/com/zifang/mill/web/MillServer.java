@@ -3,7 +3,9 @@ package com.zifang.mill.web;
 import com.zifang.mill.Mill;
 import com.zifang.mill.MillBatch;
 import com.zifang.mill.MillChunker;
+import com.zifang.mill.MillEdit;
 import com.zifang.mill.MillJson;
+import com.zifang.mill.MillMiniJson;
 import com.zifang.mill.MillOutput;
 import com.zifang.mill.MillView;
 import com.zifang.util.doc.DocBlock;
@@ -39,6 +41,7 @@ public final class MillServer {
     public static final int DEFAULT_PORT = 8891;
 
     private final Mill mill;
+    private final MillEdit edit;
     private volatile HttpServer server;
 
     public MillServer() {
@@ -47,6 +50,7 @@ public final class MillServer {
 
     public MillServer(Mill mill) {
         this.mill = mill;
+        this.edit = new MillEdit(mill);
     }
 
     public static void main(String[] args) throws IOException, InterruptedException {
@@ -70,6 +74,8 @@ public final class MillServer {
         http.createContext("/api/grind", this::serveGrind);
         http.createContext("/api/grind-url", this::serveGrindUrl);
         http.createContext("/api/grind-zip", this::serveGrindZip);
+        http.createContext("/api/edit-open", this::serveEditOpen);
+        http.createContext("/api/edit-export", this::serveEditExport);
         http.start();
         server = http;
         return http.getAddress().getPort();
@@ -459,6 +465,104 @@ public final class MillServer {
             }
         } catch (BodyTooLarge e) {
             sendError(exchange, 413, "上传超过 " + (MAX_BODY_BYTES / 1024 / 1024) + "MB 上限");
+        } catch (IllegalArgumentException e) {
+            sendError(exchange, 400, e.getMessage());
+        }
+    }
+
+    /** 开编辑会话：multipart 单文件或 {"url":...} → 磨进内存 session，返回块结构供前端编辑。 */
+    private void serveEditOpen(HttpExchange exchange) throws IOException {
+        try {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "只接受 POST");
+                return;
+            }
+            String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+            String name;
+            byte[] data;
+            if (contentType != null && contentType.toLowerCase().startsWith("multipart/form-data")) {
+                List<MillMultipart.Part> parts = MillMultipart.parse(readBody(exchange), contentType);
+                MillMultipart.Part file = parts.stream()
+                        .filter(p -> p.filename() != null).findFirst().orElse(null);
+                if (file == null) {
+                    sendError(exchange, 400, "没有收到文件");
+                    return;
+                }
+                name = file.filename() == null ? "(unnamed)" : file.filename();
+                data = file.content();
+            } else {
+                String body = new String(readBody(exchange), StandardCharsets.UTF_8);
+                String url = extractJsonString(body, "url");
+                if (url == null || url.isBlank()) {
+                    sendError(exchange, 400, "请上传文件或给 url 字段");
+                    return;
+                }
+                String scheme = java.net.URI.create(url).getScheme();
+                if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                    sendError(exchange, 400, "只支持 http/https 网页地址");
+                    return;
+                }
+                name = url;
+                data = fetchUrl(url);
+            }
+            String sessionId = edit.open(name, data);
+            MillEdit.Session session = edit.session(sessionId);
+            StringBuilder sb = new StringBuilder("{\"sessionId\":").append(MillJson.escape(sessionId));
+            sb.append(",\"name\":").append(MillJson.escape(name));
+            sb.append(",\"status\":\"ok\",\"doc\":");
+            sb.append(MillJson.toJson(session.doc()));
+            sb.append('}');
+            sendJson(exchange, 200, sb.toString());
+        } catch (BodyTooLarge e) {
+            sendError(exchange, 413, "上传超过上限");
+        } catch (IllegalArgumentException e) {
+            sendError(exchange, 400, e.getMessage());
+        }
+    }
+
+    /** 保存编辑并导出：{"session","fmt","edits":[{"i":n,"text":"..."}]} → 文件下载。 */
+    private void serveEditExport(HttpExchange exchange) throws IOException {
+        try {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "只接受 POST");
+                return;
+            }
+            String body = new String(readBody(exchange), StandardCharsets.UTF_8);
+            Map<?, ?> req = (Map<?, ?>) MillMiniJson.parse(body);
+            String sessionId = (String) req.get("session");
+            MillEdit.Session session = edit.session(sessionId);
+            if (session == null) {
+                sendError(exchange, 404, "编辑会话不存在或已过期，请重新上传");
+                return;
+            }
+            Object fmtRaw = req.get("fmt");
+            String fmt = fmtRaw == null ? "md" : fmtRaw.toString();
+            List<MillEdit.Edit> edits = new ArrayList<>();
+            if (req.get("edits") instanceof List<?> arr) {
+                for (Object o : arr) {
+                    if (!(o instanceof Map<?, ?> e)) {
+                        throw new IllegalArgumentException("edits 元素必须是对象");
+                    }
+                    if (!(e.get("i") instanceof Number n)) {
+                        throw new IllegalArgumentException("edits 元素缺 i 字段");
+                    }
+                    Object t = e.get("text");
+                    edits.add(new MillEdit.Edit(n.intValue(), t == null ? "" : t.toString()));
+                }
+            }
+            byte[] bytes = edit.export(session, edits, fmt);
+            String fileName = MillEdit.exportName(session, fmt);
+            exchange.getResponseHeaders().set("Content-Type",
+                    "html".equalsIgnoreCase(fmt) ? "text/html; charset=utf-8" : "text/plain; charset=utf-8");
+            exchange.getResponseHeaders().set("Content-Disposition",
+                    "attachment; filename*=UTF-8''" + java.net.URLEncoder
+                            .encode(fileName, StandardCharsets.UTF_8).replace("+", "%20"));
+            exchange.sendResponseHeaders(200, bytes.length == 0 ? 1 : bytes.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(bytes);
+            }
+        } catch (BodyTooLarge e) {
+            sendError(exchange, 413, "请求超过上限");
         } catch (IllegalArgumentException e) {
             sendError(exchange, 400, e.getMessage());
         }
