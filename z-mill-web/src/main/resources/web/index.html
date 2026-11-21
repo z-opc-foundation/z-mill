@@ -88,6 +88,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 20px 28px 48px; }
 .target.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .target .ic { font-family: var(--mono); font-size: 12px; opacity: .85; }
 .targets .tlabel { font-size: 12.5px; color: var(--ink2); align-self: center; margin-right: 2px; }
+.targets .tdiv { width: 1px; align-self: stretch; background: var(--line); margin: 1px 8px; }
 
 /* 目标专属工具条 */
 .tbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 18px;
@@ -224,7 +225,7 @@ footer a { color: var(--ink2); }
   <div class="logo">磨</div>
   <div>
     <h1>z-mill 资料磨坊</h1>
-    <div class="sub">拖进来 → 先看原文 → 再挑要磨成什么</div>
+    <div class="sub">拖进来 → 看原文 · 磨成 md/txt/html/json · 在线编辑回存</div>
   </div>
   <div class="spacer"></div>
   <div class="hint">14 种格式 · 零依赖 · 本机研磨，文件不出你的机器</div>
@@ -265,7 +266,6 @@ footer a { color: var(--ink2); }
 
 <script>
 "use strict";
-const VIEWS = null; // 旧 tab 模式已废，改为"转换目标"模式
 const TARGETS = [
   { key: "source",  label: "原文",     icon: "📖" },
   { key: "md",      label: "Markdown", icon: "M↓" },
@@ -275,11 +275,31 @@ const TARGETS = [
   { key: "chunks",  label: "RAG 分块", icon: "◫" },
   { key: "images",  label: "图片",     icon: "🖼" },
   { key: "zip",     label: "ZIP 打包", icon: "🗜" },
+  { key: "edit",    label: "在线编辑", icon: "✏" },
+];
+const GROUPS = [
+  { label: "看原文",   keys: ["source"] },
+  { label: "磨成",     keys: ["md", "txt", "html", "json", "chunks", "images", "zip"] },
+  { label: "在线编辑", keys: ["edit"] },
 ];
 const state = {
-  results: [], sel: -1, target: "source", srcMode: "read",
+  results: [], sel: -1, target: "source",
   mdMode: "read", htmlMode: "view", chunkQuery: "", fs: 16,
 };
+
+/* 深链：#/md、#/edit… 直达对应目标视图 */
+function keyFromHash() {
+  const m = location.hash.match(/^#\/([a-z]+)$/);
+  return m && TARGETS.some(t => t.key === m[1]) ? m[1] : null;
+}
+function setTarget(key) {
+  if (state.target === key) { renderViewer(); return; }
+  location.hash = "#/" + key;
+}
+window.addEventListener("hashchange", () => {
+  const k = keyFromHash();
+  if (k && k !== state.target) { state.target = k; renderViewer(); }
+});
 
 const $ = id => document.getElementById(id);
 const drop = $("drop"), picker = $("picker");
@@ -354,7 +374,7 @@ function acceptResults(results, metas) {
   state.results = state.results.concat(results);
   const firstOk = results.findIndex(r => r.status === "ok");
   state.sel = state.results.length - results.length + (firstOk >= 0 ? firstOk : 0);
-  state.target = "source";
+  state.target = keyFromHash() || "source";
   state.chunkQuery = "";
   results.forEach((r, i) => {
     const m = metas && metas[i];
@@ -396,7 +416,7 @@ function renderList() {
       meta.appendChild(m);
     }
     div.appendChild(name); div.appendChild(meta);
-    div.addEventListener("click", () => { state.sel = i; state.target = "source"; renderList(); renderViewer(); });
+    div.addEventListener("click", () => { state.sel = i; setTarget("source"); renderList(); });
     box.appendChild(div);
   });
 }
@@ -452,7 +472,7 @@ $("lightbox").addEventListener("click", () => $("lightbox").classList.remove("on
 /* ---------- 查看器：目标选择条 ---------- */
 function availableTargets(r) {
   return TARGETS.filter(t => {
-    if (t.key === "source") return true;
+    if (t.key === "source" || t.key === "edit") return true;
     if (t.key === "chunks") return r.chunks && r.chunks.length;
     if (t.key === "images") return r.images && r.images.length;
     if (t.key === "zip") return !!state.lastForm;
@@ -482,70 +502,87 @@ function renderViewer() {
 
   const avail = availableTargets(r);
   if (!avail.find(t => t.key === state.target)) state.target = "source";
-  const lab = document.createElement("span");
-  lab.className = "tlabel";
-  lab.textContent = "磨成 ↓";
-  targetsBox.appendChild(lab);
-  avail.forEach(t => {
-    const b = document.createElement("button");
-    b.className = "target" + (state.target === t.key ? " on" : "");
-    const ic = document.createElement("span");
-    ic.className = "ic"; ic.textContent = t.icon;
-    b.appendChild(ic); b.appendChild(document.createTextNode(t.label));
-    b.addEventListener("click", () => { state.target = t.key; renderViewer(); });
-    targetsBox.appendChild(b);
+  let firstGroup = true;
+  GROUPS.forEach(g => {
+    const inG = avail.filter(t => g.keys.includes(t.key));
+    if (!inG.length) return;
+    if (!firstGroup) {
+      const div = document.createElement("span");
+      div.className = "tdiv";
+      targetsBox.appendChild(div);
+    }
+    firstGroup = false;
+    const lab = document.createElement("span");
+    lab.className = "tlabel";
+    lab.textContent = g.label;
+    targetsBox.appendChild(lab);
+    inG.forEach(t => {
+      const b = document.createElement("button");
+      b.className = "target" + (state.target === t.key ? " on" : "");
+      const ic = document.createElement("span");
+      ic.className = "ic"; ic.textContent = t.icon;
+      b.appendChild(ic); b.appendChild(document.createTextNode(t.label));
+      b.addEventListener("click", () => setTarget(t.key));
+      targetsBox.appendChild(b);
+    });
   });
   RENDER[state.target](r, bar, body);
 }
 
-/* ---------- 目标 1：原文阅读/编辑视图 ---------- */
+/* ---------- 目标：原文阅读视图 ---------- */
 function renderSource(r, bar, body) {
   const dj = docJson(r);
   if (!dj) { body.innerHTML = '<div class="msg">结构化数据缺失</div>'; return; }
-  bar.appendChild(mkSeg([{ key: "read", label: "阅读" }, { key: "edit", label: "编辑" }], state.srcMode,
-      k => { state.srcMode = k; renderViewer(); }));
   const meta = document.createElement("span");
   meta.className = "tmeta";
-  meta.textContent = state.srcMode === "edit"
-      ? "点文字直接改 · 表格/图片暂只读"
-      : "按原文块结构排版 · " + dj.blocks.length + " 块";
+  meta.textContent = "按原文块结构排版 · " + dj.blocks.length + " 块";
   bar.appendChild(meta);
   bar.appendChild(document.createElement("span")).className = "gap";
-  if (state.srcMode === "edit") {
-    const dirty = document.createElement("span");
-    dirty.className = "tmeta"; dirty.id = "dirtyMeta";
-    dirty.textContent = "改了 " + Object.keys(r.edits || {}).length + " 处";
-    bar.appendChild(dirty);
-    const sel = document.createElement("select");
-    sel.id = "fmtSel";
-    sel.style.cssText = "font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;";
-    [["md", "Markdown .md"], ["txt", "纯文本 .txt"], ["html", "网页 .html"]].forEach(x => {
-      const o = document.createElement("option"); o.value = x[0]; o.textContent = x[1]; sel.appendChild(o);
-    });
-    bar.appendChild(sel);
-    bar.appendChild(mkButton("保存并下载", ev => saveEdits(r, ev.currentTarget), true));
-  } else {
-    const minus = mkButton("A−", () => { state.fs = Math.max(12, state.fs - 2); renderViewer(); });
-    const plus = mkButton("A+", () => { state.fs = Math.min(24, state.fs + 2); renderViewer(); });
-    bar.appendChild(minus); bar.appendChild(plus);
-  }
+  const minus = mkButton("A−", () => { state.fs = Math.max(12, state.fs - 2); renderViewer(); });
+  const plus = mkButton("A+", () => { state.fs = Math.min(24, state.fs + 2); renderViewer(); });
+  bar.appendChild(minus); bar.appendChild(plus);
   const imgs = imgByName(r);
-  if (state.srcMode === "edit") {
-    const hint = document.createElement("div");
-    hint.className = "edit-hint";
-    hint.textContent = "直接点击文字修改；保存时原文按块重新导出，改过的块会丢掉加粗/颜色等行内样式。导出格式选右上角。";
-    body.appendChild(hint);
-    const list = document.createElement("div");
-    list.className = "editlist";
-    appendBlocksEdit(list, dj.blocks, imgs, r);
-    body.appendChild(list);
-  } else {
-    const read = document.createElement("div");
-    read.className = "read";
-    read.style.setProperty("--fs", state.fs + "px");
-    appendBlocks(read, dj.blocks, imgs);
-    body.appendChild(read);
+  const read = document.createElement("div");
+  read.className = "read";
+  read.style.setProperty("--fs", state.fs + "px");
+  appendBlocks(read, dj.blocks, imgs);
+  body.appendChild(read);
+}
+
+/* ---------- 目标：在线编辑（独立大板块） ---------- */
+function renderEdit(r, bar, body) {
+  const dj = docJson(r);
+  if (!dj) { body.innerHTML = '<div class="msg">结构化数据缺失</div>'; return; }
+  if (!r.file && !r.url) {
+    body.innerHTML = '<div class="msg">这份成品手里没有原始文件（页面刷新过就没了），<br>把它重新拖一次进来即可继续编辑。</div>';
+    return;
   }
+  const meta = document.createElement("span");
+  meta.className = "tmeta";
+  meta.textContent = "点文字直接改 · 表格/图片暂只读";
+  bar.appendChild(meta);
+  bar.appendChild(document.createElement("span")).className = "gap";
+  const dirty = document.createElement("span");
+  dirty.className = "tmeta"; dirty.id = "dirtyMeta";
+  dirty.textContent = "改了 " + Object.keys(r.edits || {}).length + " 处";
+  bar.appendChild(dirty);
+  const sel = document.createElement("select");
+  sel.id = "fmtSel";
+  sel.style.cssText = "font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;";
+  [["md", "Markdown .md"], ["txt", "纯文本 .txt"], ["html", "网页 .html"]].forEach(x => {
+    const o = document.createElement("option"); o.value = x[0]; o.textContent = x[1]; sel.appendChild(o);
+  });
+  bar.appendChild(sel);
+  bar.appendChild(mkButton("保存并下载", ev => saveEdits(r, ev.currentTarget), true));
+  const imgs = imgByName(r);
+  const hint = document.createElement("div");
+  hint.className = "edit-hint";
+  hint.textContent = "直接点击文字修改；保存时原文按块重新导出，改过的块会丢掉加粗/颜色等行内样式。导出格式选右上角。";
+  body.appendChild(hint);
+  const list = document.createElement("div");
+  list.className = "editlist";
+  appendBlocksEdit(list, dj.blocks, imgs, r);
+  body.appendChild(list);
 }
 
 const EDITABLE = { paragraph: "段", heading: "题", "list-item": "列", quote: "引", code: "码" };
@@ -1016,6 +1053,7 @@ function renderZip(r, bar, body) {
 const RENDER = {
   source: renderSource, md: renderMd, json: renderJson, txt: renderTxt,
   html: renderHtml, chunks: renderChunks, images: renderImages, zip: renderZip,
+  edit: renderEdit,
 };
 
 /* ---------- 安全 markdown 渲染（先转义，再转换） ---------- */
