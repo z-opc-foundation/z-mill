@@ -89,9 +89,9 @@ public final class MillJson {
                     DocBlock.Table.Cell cell = row.cells().get(j);
                     sb.append("{\"colspan\":").append(cell.colspan())
                             .append(",\"rowspan\":").append(cell.rowspan())
-                            .append(",\"blocks\":");
+                            .append(",\"blocks\":[");
                     appendBlocks(sb, cell.blocks());
-                    sb.append('}');
+                    sb.append("]}");
                 }
                 sb.append("]}");
             }
@@ -133,9 +133,9 @@ public final class MillJson {
                 sb.append("{\"index\":").append(slide.index())
                         .append(",\"title\":");
                 appendString(sb, slide.title());
-                sb.append(",\"blocks\":");
+                sb.append(",\"blocks\":[");
                 appendBlocks(sb, slide.blocks());
-                sb.append('}');
+                sb.append("]}");
             }
             sb.append("]}");
         }

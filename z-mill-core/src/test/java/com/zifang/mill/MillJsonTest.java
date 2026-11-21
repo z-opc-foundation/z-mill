@@ -51,6 +51,50 @@ class MillJsonTest {
     }
 
     @Test
+    void multiBlockCellsAndSlidesStayParseable() {
+        DocDocument doc = new DocDocument();
+        doc.add(new DocBlock.Slides(List.of(new DocBlock.Slides.Slide(1, "页",
+                List.of(new DocBlock.Paragraph("第一段"), new DocBlock.Heading(2, "次标题"))))));
+        doc.add(new DocBlock.Table(List.of(new DocBlock.Table.Row(
+                List.of(new DocBlock.Table.Cell(
+                        List.of(new DocBlock.Paragraph("格一"), new DocBlock.Paragraph("格二")), 1, 1),
+                        new DocBlock.Table.Cell(
+                                List.of(new DocBlock.Paragraph("格三"), new DocBlock.Quote(List.of(DocSpan.plain("引")))), 1, 1)),
+                false))));
+        String json = MillJson.toJson(doc);
+        assertTrue(json.contains("\"blocks\":[{\"type\":\"paragraph\",\"spans\":[{\"text\":\"第一段\"}]}"
+                + ",{\"type\":\"heading\""), json);
+        assertTrue(json.contains("\"blocks\":[{\"type\":\"paragraph\",\"spans\":[{\"text\":\"格一\"}]}"
+                + ",{\"type\":\"paragraph\",\"spans\":[{\"text\":\"格二\"}]}]"), json);
+        assertBalancedJson(json);
+    }
+
+    /** 零依赖的结构合法性检查：字符串感知的括号配平。 */
+    private static void assertBalancedJson(String json) {
+        java.util.Deque<Character> stack = new java.util.ArrayDeque<>();
+        boolean inStr = false, esc = false;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (esc) { esc = false; continue; }
+            if (inStr) {
+                if (c == '\\') esc = true;
+                else if (c == '"') inStr = false;
+                continue;
+            }
+            if (c == '"') inStr = true;
+            else if (c == '{' || c == '[') stack.push(c);
+            else if (c == '}' || c == ']') {
+                assertFalse(stack.isEmpty(), "多余的闭合括号 @" + i + ": " + json);
+                char open = stack.pop();
+                assertTrue((c == '}' && open == '{') || (c == ']' && open == '['),
+                        "括号错配 @" + i + ": " + json);
+            }
+        }
+        assertFalse(inStr, "字符串未闭合");
+        assertTrue(stack.isEmpty(), "括号未闭合: " + stack);
+    }
+
+    @Test
     void emitsSpanStylesAndMeta() {
         DocDocument doc = new DocDocument();
         doc.getMeta().setTitle("磨坊手册");
