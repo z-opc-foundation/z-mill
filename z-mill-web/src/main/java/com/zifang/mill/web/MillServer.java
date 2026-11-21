@@ -1,10 +1,12 @@
 package com.zifang.mill.web;
 
 import com.zifang.mill.Mill;
+import com.zifang.mill.MillBatch;
 import com.zifang.mill.MillChunker;
 import com.zifang.mill.MillJson;
 import com.zifang.mill.MillOutput;
 import com.zifang.mill.MillView;
+import com.zifang.util.doc.DocBlock;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -28,6 +30,11 @@ public final class MillServer {
 
     /** 单个网页抓取上限：10MB。 */
     static final long MAX_URL_BYTES = 10L * 1024 * 1024;
+
+    /** 内嵌图片回传预算：单张 8MB、最多 50 张、base64 总量 30MB，超出截断并标记。 */
+    static final long MAX_IMAGE_BYTES = 8L * 1024 * 1024;
+    static final int MAX_IMAGE_COUNT = 50;
+    static final long MAX_IMAGES_TOTAL_BYTES = 30L * 1024 * 1024;
 
     public static final int DEFAULT_PORT = 8891;
 
@@ -62,6 +69,7 @@ public final class MillServer {
         http.createContext("/", this::serveIndex);
         http.createContext("/api/grind", this::serveGrind);
         http.createContext("/api/grind-url", this::serveGrindUrl);
+        http.createContext("/api/grind-zip", this::serveGrindZip);
         http.start();
         server = http;
         return http.getAddress().getPort();
@@ -131,12 +139,14 @@ public final class MillServer {
             boolean withChunks = "true".equalsIgnoreCase(fields.getOrDefault("chunks", "true"));
 
             StringBuilder sb = new StringBuilder("{\"results\":[");
+            List<Ground> grounds = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
                 if (i > 0) {
                     sb.append(',');
                 }
-                appendResult(sb, files.get(i).filename() == null ? "(unnamed)" : files.get(i).filename(),
-                        files.get(i).content(), views, withChunks);
+                grounds.add(appendResult(sb,
+                        files.get(i).filename() == null ? "(unnamed)" : files.get(i).filename(),
+                        files.get(i).content(), views, withChunks));
             }
             sb.append("]}");
             sendJson(exchange, 200, sb.toString());
@@ -145,6 +155,10 @@ public final class MillServer {
         } catch (IllegalArgumentException e) {
             sendError(exchange, 400, e.getMessage());
         }
+    }
+
+    /** 一次成功研磨的完整留存：给 zip 端点复用。 */
+    private record Ground(String base, String name, MillOutput output) {
     }
 
     /** 网页直磨：POST {"url":"https://..."} → 抓取 → 磨。只收 http/https，抓取上限 10MB。 */
@@ -221,12 +235,12 @@ public final class MillServer {
                 .replace("\\t", "\t");
     }
 
-    private void appendResult(StringBuilder sb, String name, byte[] data,
-                              List<MillView> views, boolean withChunks) {
+    private Ground appendResult(StringBuilder sb, String name, byte[] data,
+                                List<MillView> views, boolean withChunks) {
         sb.append("{\"name\":").append(MillJson.escape(name));
         if (!mill.supports(data)) {
             sb.append(",\"status\":\"unsupported\"}");
-            return;
+            return null;
         }
         try {
             MillOutput output = mill.grind(data, name);
@@ -248,6 +262,7 @@ public final class MillServer {
                         .append(MillJson.escape(view.render(output)));
             }
             sb.append('}');
+            appendImages(sb, output);
             if (chunks != null) {
                 sb.append(",\"chunks\":[");
                 for (int i = 0; i < chunks.size(); i++) {
@@ -268,9 +283,184 @@ public final class MillServer {
                 sb.append(']');
             }
             sb.append('}');
+            return new Ground(zipSafeBase(name), name, output);
         } catch (IOException | RuntimeException e) {
             sb.append(",\"status\":\"failed\",\"error\":").append(MillJson.escape(
                     e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())).append('}');
+            return null;
+        }
+    }
+
+    /** 内嵌图片按预算回传（base64），超出截断并标记 imagesTruncated。 */
+    private void appendImages(StringBuilder sb, MillOutput output) {
+        List<DocBlock.Image> images = new ArrayList<>();
+        collectImages(output.document().getBlocks(), images);
+        if (images.isEmpty()) {
+            sb.append(",\"images\":[]");
+            return;
+        }
+        long total = 0;
+        int emitted = 0;
+        boolean truncated = false;
+        sb.append(",\"images\":[");
+        for (DocBlock.Image image : images) {
+            if (image.data() == null || image.data().length == 0
+                    || image.data().length > MAX_IMAGE_BYTES) {
+                if (image.data() != null && image.data().length > MAX_IMAGE_BYTES) {
+                    truncated = true;
+                }
+                continue;
+            }
+            if (emitted >= MAX_IMAGE_COUNT || total + image.data().length > MAX_IMAGES_TOTAL_BYTES) {
+                truncated = true;
+                break;
+            }
+            if (emitted > 0) {
+                sb.append(',');
+            }
+            total += image.data().length;
+            emitted++;
+            sb.append("{\"name\":").append(MillJson.escape(image.name()))
+                    .append(",\"mime\":").append(MillJson.escape(image.mimeType()))
+                    .append(",\"b64\":\"").append(java.util.Base64.getEncoder()
+                            .encodeToString(image.data())).append("\"}");
+        }
+        sb.append(']');
+        if (truncated) {
+            sb.append(",\"imagesTruncated\":true");
+        }
+    }
+
+    private static void collectImages(List<DocBlock> blocks, List<DocBlock.Image> out) {
+        for (DocBlock block : blocks) {
+            if (block instanceof DocBlock.Image image) {
+                out.add(image);
+            } else if (block instanceof DocBlock.Table table) {
+                for (DocBlock.Table.Row row : table.rows()) {
+                    for (DocBlock.Table.Cell cell : row.cells()) {
+                        collectImages(cell.blocks(), out);
+                    }
+                }
+            } else if (block instanceof DocBlock.Slides slides) {
+                for (DocBlock.Slides.Slide slide : slides.slides()) {
+                    collectImages(slide.blocks(), out);
+                }
+            }
+        }
+    }
+
+    /** zip 内的安全目录名：去扩展名 + 路径字符清洗 + 去重。 */
+    private static String zipSafeBase(String name) {
+        String base = MillBatch.stripExtension(name);
+        String cleaned = base.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").strip();
+        return cleaned.isEmpty() ? "file" : cleaned;
+    }
+
+    /** 批量研磨打包：POST /api/grind-zip（与 /api/grind 同参）→ application/zip。 */
+    private void serveGrindZip(HttpExchange exchange) throws IOException {
+        try {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "只接受 POST");
+                return;
+            }
+            String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+            if (contentType == null || !contentType.toLowerCase().startsWith("multipart/form-data")) {
+                sendError(exchange, 400, "请用 multipart/form-data 上传文件");
+                return;
+            }
+            byte[] body = readBody(exchange);
+            List<MillMultipart.Part> parts = MillMultipart.parse(body, contentType);
+            List<MillMultipart.Part> files = new ArrayList<>();
+            Map<String, String> fields = new LinkedHashMap<>();
+            for (MillMultipart.Part part : parts) {
+                if (part.filename() != null) {
+                    files.add(part);
+                } else {
+                    fields.put(part.name(), new String(part.content(), StandardCharsets.UTF_8));
+                }
+            }
+            if (files.isEmpty()) {
+                sendError(exchange, 400, "没有收到任何文件");
+                return;
+            }
+            List<MillView> views = parseViews(fields.getOrDefault("views", "md,json,txt,html"));
+            List<String> manifest = new ArrayList<>();
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(buffer);
+            java.util.Set<String> usedBases = new java.util.HashSet<>();
+            int ok = 0;
+            int unsupported = 0;
+            int failed = 0;
+            for (MillMultipart.Part file : files) {
+                String rawName = file.filename() == null ? "(unnamed)" : file.filename();
+                byte[] data = file.content();
+                if (!mill.supports(data)) {
+                    unsupported++;
+                    manifest.add("unsupported\t" + rawName);
+                    continue;
+                }
+                try {
+                    MillOutput output = mill.grind(data, rawName);
+                    ok++;
+                    String base = zipSafeBase(rawName);
+                    String dir = base;
+                    int n = 2;
+                    while (!usedBases.add(dir)) {
+                        dir = base + "-" + n++;
+                    }
+                    for (MillView view : views) {
+                        zip.putNextEntry(new java.util.zip.ZipEntry(dir + "/" + base + "." + view.extension()));
+                        zip.write(view.render(output).getBytes(StandardCharsets.UTF_8));
+                        zip.closeEntry();
+                    }
+                    List<DocBlock.Image> images = new ArrayList<>();
+                    collectImages(output.document().getBlocks(), images);
+                    java.util.Set<String> usedImageNames = new java.util.HashSet<>();
+                    int imageNo = 0;
+                    for (DocBlock.Image image : images) {
+                        if (image.data() == null || image.data().length == 0) {
+                            continue;
+                        }
+                        String imageName = image.name() == null || image.name().isBlank()
+                                ? "image" : image.name();
+                        String safe = imageName.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+                        String entry = safe;
+                        while (!usedImageNames.add(entry)) {
+                            entry = safe + "-" + (++imageNo);
+                        }
+                        if (!entry.contains(".")) {
+                            entry = entry + ".bin";
+                        }
+                        zip.putNextEntry(new java.util.zip.ZipEntry(dir + "/images/" + entry));
+                        zip.write(image.data());
+                        zip.closeEntry();
+                    }
+                    manifest.add("ok\t" + rawName + " -> " + dir + "/");
+                } catch (IOException | RuntimeException e) {
+                    failed++;
+                    manifest.add("failed\t" + rawName + ": "
+                            + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                }
+            }
+            zip.putNextEntry(new java.util.zip.ZipEntry("manifest.txt"));
+            manifest.add("合计 " + files.size() + "：成功 " + ok + "，不支持 " + unsupported + "，失败 " + failed);
+            for (String line : manifest) {
+                zip.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+            zip.closeEntry();
+            zip.finish();
+            byte[] bytes = buffer.toByteArray();
+            exchange.getResponseHeaders().set("Content-Type", "application/zip");
+            exchange.getResponseHeaders().set("Content-Disposition",
+                    "attachment; filename=\"z-mill-output.zip\"");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(bytes);
+            }
+        } catch (BodyTooLarge e) {
+            sendError(exchange, 413, "上传超过 " + (MAX_BODY_BYTES / 1024 / 1024) + "MB 上限");
+        } catch (IllegalArgumentException e) {
+            sendError(exchange, 400, e.getMessage());
         }
     }
 

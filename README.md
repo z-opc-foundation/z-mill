@@ -60,11 +60,14 @@ java -jar z-mill-web/target/z-mill-web.jar --port 8891
 拖拽（或点击、`Ctrl/⌘+V` 粘贴）上传，多文件批量；**URL 栏粘贴 http/https 地址直接抓取整页磨制**
 （15s 超时、单页 10MB 上限、仅 http/https）。成品清单逐件给状态徽章（格式 / 不支持 / 失败），
 查看器六个 tab：**预览**（内置安全 Markdown 渲染：表格、列表、引用、代码块；先转义再转换，
-防 XSS）、Markdown 源码、JSON（已美化）、纯文本、HTML 源码、**分块**（标题路径面包屑的 RAG
-资料粒度卡片）。一键复制、逐形态下载、`↑`/`↓` 键盘切文件。
+防 XSS；**内嵌图片按 base64 真实显示** + 画廊缩略图点击下载）、Markdown 源码、JSON（已美化）、
+纯文本、HTML 源码、**分块**（标题路径面包屑的 RAG 资料粒度卡片）。一键复制、逐形态下载、
+**打包下载 .zip**（每文件一个目录：四形态成品 + images/ 原图 + manifest.txt 台账）、
+`↑`/`↓` 键盘切文件。
 
-`POST /api/grind`（multipart，单请求上限 64MB）与 `POST /api/grind-url`（JSON `{"url":...}`）
-可供脚本直接调用，`GET /` 出单页。
+`POST /api/grind`（multipart，单请求上限 64MB，响应含 `images[]` base64 数组：单张 8MB /
+50 张 / 总量 30MB 预算，超出标记截断）、`POST /api/grind-url`（JSON `{"url":...}`）、
+`POST /api/grind-zip`（与 grind 同参，回 application/zip）可供脚本直接调用，`GET /` 出单页。
 
 ## 模块
 

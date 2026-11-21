@@ -13,6 +13,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 进程内起真服务器，HTTP 口径端到端。 */
@@ -145,5 +146,76 @@ class MillWebEndToEndTest {
         String missing = post("/api/grind-url", "{}".getBytes(StandardCharsets.UTF_8),
                 "application/json");
         assertTrue(missing.startsWith("400|"), missing);
+    }
+
+    private byte[] corpus(String name) throws IOException {
+        try (InputStream in = getClass().getResourceAsStream("/corpus/" + name)) {
+            if (in == null) {
+                throw new IOException("corpus 缺失: " + name);
+            }
+            return in.readAllBytes();
+        }
+    }
+
+    @Test
+    void grindsDocxWithEmbeddedImage() throws IOException {
+        byte[] picture = corpus("tiny-picture.docx");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.writeBytes(partBody("MB", "files", "tiny-picture.docx", picture));
+        out.writeBytes(terminal("MB"));
+        String response = post("/api/grind", out.toByteArray(), "multipart/form-data; boundary=MB");
+        assertTrue(response.startsWith("200|"), response);
+        assertTrue(response.contains("\"images\":[{"), response);
+        assertTrue(response.contains("\"b64\":\""), response);
+        assertFalse(response.contains("\"imagesTruncated\""), response);
+    }
+
+    @Test
+    void grindZipReturnsZipWithManifestAndOutputs() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.writeBytes(partBody("MB", "files", "hello.txt",
+                "zip 冒烟正文".getBytes(StandardCharsets.UTF_8)));
+        out.writeBytes(partBody("MB", "files", "junk.bin",
+                new byte[]{0x00, 0x01, (byte) 0xFF, 0x00, 0x01, (byte) 0xFF}));
+        out.writeBytes(terminal("MB"));
+        HttpURLConnection conn = (HttpURLConnection) new URL("http://localhost:" + port + "/api/grind-zip")
+                .openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=MB");
+        conn.setFixedLengthStreamingMode(out.size());
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(out.toByteArray());
+        }
+        assertEquals(200, conn.getResponseCode());
+        assertEquals("application/zip", conn.getHeaderField("Content-Type"));
+        byte[] zip = readAll(conn.getInputStream());
+        assertTrue(zip.length > 4);
+        assertEquals('P', (char) zip[0]);
+        assertEquals('K', (char) zip[1]);
+
+        // 真解包：条目齐全 + manifest 台账内容正确
+        java.util.zip.ZipInputStream zin = new java.util.zip.ZipInputStream(
+                new java.io.ByteArrayInputStream(zip));
+        java.util.Set<String> entries = new java.util.HashSet<>();
+        String manifest = null;
+        java.util.zip.ZipEntry entry;
+        while ((entry = zin.getNextEntry()) != null) {
+            entries.add(entry.getName());
+            if (entry.getName().equals("manifest.txt")) {
+                manifest = new String(readAll(zin), StandardCharsets.UTF_8);
+            }
+        }
+        assertTrue(entries.contains("hello/hello.md"), entries.toString());
+        assertTrue(entries.contains("hello/hello.json"), entries.toString());
+        assertTrue(entries.contains("manifest.txt"), entries.toString());
+        assertNotNull(manifest);
+        assertTrue(manifest.contains("unsupported\tjunk.bin"), manifest);
+        assertTrue(manifest.contains("ok\thello.txt -> hello/"), manifest);
+        assertTrue(manifest.contains("成功 1，不支持 1，失败 0"), manifest);
+    }
+
+    private static void assertNotNull(Object value) {
+        org.junit.jupiter.api.Assertions.assertNotNull(value, "manifest 缺失");
     }
 }
