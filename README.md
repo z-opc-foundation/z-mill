@@ -11,7 +11,10 @@
 | 部署成本 | 模型权重数 GB、CUDA 环境 | 一个 jar |
 | 解析深度 | 版面检测 / OCR / 公式识别（深度模型） | 二进制格式逐记录自研解析（BIFF 记录流 / FIB piece table / CFB 容器等） |
 
-两者是互补关系：电子档 z-mill 直接磨，扫描件留给 MinerU 类深度模型——z-mill 的路线图里有外部模型适配器接口。
+扫描件（无文本层 PDF）不再只能外包：**视觉 OCR 走自研 AI 底座 z-llm-gateway**（OpenAI 兼容
+`chat/completions` + `image_url` dataURL 直送自家网关，不引任何外部三方服务）。判定为扫描件时
+（PDF + 全文文本极少 + 带内嵌页图）逐图转写、以纯文本段落替换页图；未配置 OCR 或转写失败时
+诚实降级——保留原图，行为与接入前一致。
 
 ## 快速开始
 
@@ -46,6 +49,10 @@ java -jar z-mill-cli/target/z-mill.jar 资料/ -o 成品/ -f md,json
 | `<文件\|目录>` | 单文件磨单件；目录批量磨，输出目录镜像相对路径 |
 | `-o 目录` | 成品目录；缺省时单文件写原目录、目录写 `<目录>/z-mill-out` |
 | `-f md,txt,html,json` | 成品形态，可多选；缺省 md |
+| `--ocr-base-url http://…` | 扫描件 OCR：z-llm-gateway（或任意 OpenAI 兼容）根地址；留空 = 关 OCR |
+| `--ocr-model 模型名` | 视觉模型；缺省 `qwen-vl-max` |
+| `--ocr-api-key 密钥` | 透传给网关的 Bearer token，可空 |
+| `--ocr-timeout-ms 毫秒` | 单图转写超时；缺省 60000 |
 
 退出码：`0` 成功；`1` 用法错误；`2` 有文件研磨失败或格式不支持。
 
@@ -54,6 +61,8 @@ java -jar z-mill-cli/target/z-mill.jar 资料/ -o 成品/ -f md,json
 ```bash
 mvn -pl z-mill-web -am package
 java -jar z-mill-web/target/z-mill-web.jar --port 8891
+# 扫描件 OCR（自研 AI 底座 z-llm-gateway，地址含宿主端口与 context-path）：
+java -jar z-mill-web/target/z-mill-web.jar --ocr-base-url http://<llm-gateway 宿主>/
 # 打开 http://localhost:8891
 ```
 

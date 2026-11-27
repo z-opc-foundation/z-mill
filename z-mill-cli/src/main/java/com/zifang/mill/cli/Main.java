@@ -4,6 +4,7 @@ import com.zifang.mill.Mill;
 import com.zifang.mill.MillBatch;
 import com.zifang.mill.MillOutput;
 import com.zifang.mill.MillView;
+import com.zifang.mill.ocr.MillOcrs;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -47,6 +48,9 @@ public final class Main {
                     views = parsed;
                 }
                 default -> {
+                    if (isOcrFlag(args[i])) {
+                        break; // OCR 参数由 MillOcrs.parseArgs 统一消费
+                    }
                     err.println("未知参数: " + args[i]);
                     return 1;
                 }
@@ -56,7 +60,7 @@ public final class Main {
             err.println("不存在: " + input);
             return 1;
         }
-        Mill mill = new Mill();
+        Mill mill = new Mill(MillOcrs.fromConfig(MillOcrs.parseArgs(args)));
         try {
             if (Files.isDirectory(input)) {
                 return grindDirectory(mill, input, outDir, views, out);
@@ -65,6 +69,16 @@ public final class Main {
         } catch (IOException | RuntimeException e) {
             err.println("研磨失败: " + e.getMessage());
             return 2;
+        }
+    }
+
+    private static boolean isOcrFlag(String arg) {
+        switch (arg) {
+            case "--ocr-base-url", "--ocr-model", "--ocr-api-key", "--ocr-timeout-ms",
+                    "--ocr-prompt":
+                return true;
+            default:
+                return false;
         }
     }
 

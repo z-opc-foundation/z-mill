@@ -8,6 +8,8 @@ import com.zifang.mill.MillJson;
 import com.zifang.mill.MillMiniJson;
 import com.zifang.mill.MillOutput;
 import com.zifang.mill.MillView;
+import com.zifang.mill.ocr.MillOcrs;
+import com.zifang.mill.ocr.OcrConfig;
 import com.zifang.util.doc.DocBlock;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -60,7 +62,13 @@ public final class MillServer {
                 port = Integer.parseInt(args[i + 1]);
             }
         }
-        MillServer millServer = new MillServer();
+        OcrConfig ocrConfig = MillOcrs.parseArgs(args);
+        Mill mill = new Mill(MillOcrs.fromConfig(ocrConfig));
+        if (ocrConfig.baseUrl() != null && !ocrConfig.baseUrl().isBlank()) {
+            System.out.println("OCR 已启用：" + ocrConfig.baseUrl()
+                    + "（模型 " + ocrConfig.model() + "，仅对扫描版 PDF 生效）");
+        }
+        MillServer millServer = new MillServer(mill);
         int bound = millServer.start(port);
         System.out.println("z-mill 资料磨坊已开张：http://localhost:" + bound);
         new CountDownLatch(1).await();
